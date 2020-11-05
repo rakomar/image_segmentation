@@ -344,7 +344,7 @@ def main():
     fig.canvas.mpl_connect('scroll_event', tracker.onscroll)
     plt.show()
 
-    plot_voronoi_3d(vor)
+    plot_voronoi_3d(image)
 
 
 if __name__ == "__main__":
