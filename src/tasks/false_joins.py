@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial import Voronoi
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import time
+import igraph
 
 import functools
 
@@ -259,7 +259,7 @@ def main():
 
     num_samples = 40
     num_removed_surfaces = 40
-    image_width = 64  # change to adapt resolution
+    image_width = 3  # change to adapt resolution
 
     # create Voronoi diagram
     vor, sample_points = voronoi_diagram(num_samples)
@@ -301,7 +301,7 @@ def main():
     reduced_border = np.zeros(image.shape)
     noise = np.zeros(image.shape)
     reduced_noise = np.zeros(image.shape)
-    noise_generator = np.random.normal(0, 0.005, size=image.shape) * 1
+    noise_generator = np.random.normal(0, 0.01, size=image.shape) * 1
 
     pixels = []  # list of length image_width^3
 
@@ -309,7 +309,7 @@ def main():
         print('Progress: Layer', i)
         for j in range(image_width):
             for k in range(image_width):
-                pixel = Pixel(np.array([i + 1, j + 1, k + 1]) / image_width)
+                pixel = Pixel(np.array([i, j, k]) / image_width)
                 pixel.min_dist_sample(sample_points=sample_points)
                 pixels.append(pixel)
 
@@ -328,6 +328,9 @@ def main():
                 noise[i, j, k] = pixel.gray_value
                 reduced_noise[i, j, k] = pixel.reduced_gray_value
 
+    # reformat image to 8bit
+    reduced_noise = np.interp(reduced_noise, (reduced_noise.min(), reduced_noise.max()), (0, 255)).astype(np.uint8)
+
     np.save('storage/image', image)
     np.save('storage/border', border)
     np.save('storage/border + reduced', reduced_border)
@@ -345,6 +348,8 @@ def main():
     plt.show()
 
     plot_voronoi_3d(image)
+
+    return image
 
 
 if __name__ == "__main__":
