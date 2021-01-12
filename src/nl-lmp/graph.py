@@ -32,6 +32,9 @@ class Graph:
             self.nodes.append(Node(i))
         self.edges = []
 
+    def __len__(self):
+        return len(self.nodes)
+
     def add_node(self):
         self.nodes.append(Node(len(self.nodes)))
 

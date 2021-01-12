@@ -2,9 +2,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial import Voronoi
 import time
-import igraph
-
 import functools
+
+
+def connect_neighbors(sample, sample_region):
+    # recursively add connected samples to the sample's region
+    sample_region.add(sample.index)
+    for connected_sample in sample.directly_connected_samples:
+        if connected_sample.index not in sample_region:
+            connect_neighbors(connected_sample, sample_region)
 
 
 class SamplePoint:
@@ -12,7 +18,8 @@ class SamplePoint:
         self.position = position
         self.index = index
 
-        self.directly_connected_samples = [self]
+        self.directly_connected_samples = []
+        self.region = None
         self.adjacent_surface_indices = []
         self.reduced_adjacent_surface_indices = []
         self.same_surfaces = None
@@ -21,11 +28,17 @@ class SamplePoint:
         return 'S-Index: ' + str(self.index)
 
     def compare_surfaces(self):
-        if self.adjacent_surface_indices == self.reduced_adjacent_surface_indices:  # might need set transformation for different list orderings
+        if set(self.adjacent_surface_indices) == set(self.reduced_adjacent_surface_indices):
             self.same_surfaces = True
         else:
             self.same_surfaces = False
         return
+
+    def grow_connected_region(self):
+        # region growing on connected samples
+        sample_region = set()
+        connect_neighbors(self, sample_region)
+        self.region = sample_region
 
 
 class Pixel:
@@ -111,7 +124,7 @@ class IndexTracker(object):
 
     """
 
-    def __init__(self, ax, A, B, C, D, E):
+    def __init__(self, ax, A, B, C, D, E, F):
         # A, B, C, D 3D images of shape image_width^3 stored in np.array
         self.ax = ax
 
@@ -120,6 +133,7 @@ class IndexTracker(object):
         self.C = C
         self.D = D
         self.E = E
+        self.F = F
         rows, cols, self.slices = A.shape
         self.ind = self.slices//2
 
@@ -133,7 +147,8 @@ class IndexTracker(object):
         self.ax[1, 0].set_title('Noise')
         self.im4 = ax[1, 1].imshow(self.E[:, :, self.ind], cmap='gray')
         self.ax[1, 1].set_title('Reduced Noise')
-        self.ax[1, 2].set_axis_off()
+        self.im5 = ax[1, 2].imshow(self.F[:, :, self.ind])
+        self.ax[1, 2].set_title('Reduced Original')
         self.update()
 
     def onscroll(self, event):
@@ -151,6 +166,7 @@ class IndexTracker(object):
         self.im2.set_data(self.C[:, :, self.ind])
         self.im3.set_data(self.D[:, :, self.ind])
         self.im4.set_data(self.E[:, :, self.ind])
+        self.im5.set_data(self.F[:, :, self.ind])
 
         self.im0.axes.figure.canvas.draw()
 
@@ -257,9 +273,9 @@ def plot_voronoi_3d(image):
 def main():
     start_time = time.time()
 
-    num_samples = 40
-    num_removed_surfaces = 40
-    image_width = 3  # change to adapt resolution
+    num_samples = 10
+    num_removed_surfaces = 10
+    image_width = 10  # change to adapt resolution
 
     # create Voronoi diagram
     vor, sample_points = voronoi_diagram(num_samples)
@@ -282,23 +298,27 @@ def main():
         sample1.adjacent_surface_indices.append(surface_index)
 
         if surface_index not in reduced_ridge_point_indices:
-            sample0.directly_connected_samples.append(sample1)
-            sample1.directly_connected_samples.append(sample0)
-
             sample0.reduced_adjacent_surface_indices.append(surface_index)
             sample1.reduced_adjacent_surface_indices.append(surface_index)
+        else:
+            sample0.directly_connected_samples.append(sample1)
+            sample1.directly_connected_samples.append(sample0)
 
     # remove surface duplicates and compare surface lists
     for sample_point in sample_points:
         sample_point.adjacent_surface_indices = list(set(sample_point.adjacent_surface_indices))
         sample_point.reduced_adjacent_surface_indices = list(set(sample_point.reduced_adjacent_surface_indices))
         sample_point.directly_connected_samples = list(set(sample_point.directly_connected_samples))
-        sample_point.compare_surfaces()
+
+    for sample_point in sample_points:
+        # directly_connected_samples have to be built before for all samples
+        sample_point.grow_connected_region()
 
     # construct images
-    image = np.zeros((image_width, image_width, image_width))
-    border = np.zeros(image.shape)
-    reduced_border = np.zeros(image.shape)
+    image = np.zeros((image_width, image_width, image_width), dtype=int)
+    reduced_image = np.zeros(image.shape, dtype=int)
+    border = np.zeros(image.shape, dtype=int)
+    reduced_border = np.zeros(image.shape, dtype=int)
     noise = np.zeros(image.shape)
     reduced_noise = np.zeros(image.shape)
     noise_generator = np.random.normal(0, 0.01, size=image.shape) * 1
@@ -314,6 +334,7 @@ def main():
                 pixels.append(pixel)
 
                 image[i, j, k] = pixel.closest_sample.index
+                reduced_image[i, j, k] = min(pixel.closest_sample.region)
 
                 pixel.min_dist_surface(surfaces=surfaces)
 
@@ -331,16 +352,17 @@ def main():
     # reformat image to 8bit
     reduced_noise = np.interp(reduced_noise, (reduced_noise.min(), reduced_noise.max()), (0, 255)).astype(np.uint8)
 
-    np.save('storage/image', image)
-    np.save('storage/border', border)
-    np.save('storage/border + reduced', reduced_border)
-    np.save('storage/noise', noise)
-    np.save('storage/noise + reduced', reduced_noise)
+    np.save('../storage/image', image)
+    np.save('../storage/image + reduced', reduced_image)
+    np.save('../storage/border', border)
+    np.save('../storage/border + reduced', reduced_border)
+    np.save('../storage/noise', noise)
+    np.save('../storage/noise + reduced', reduced_noise)
 
     print("--- %s seconds ---" % (time.time() - start_time))
 
     fig, ax = plt.subplots(2, 3)
-    tracker = IndexTracker(ax, image, border, reduced_border, noise, reduced_noise)
+    tracker = IndexTracker(ax, image, border, reduced_border, noise, reduced_noise, reduced_image)
     fig.suptitle('Use scroll wheel to navigate slices \nImage dimensions: ({}, {}, {}) \n'
                  'Number samples: {} \nNumber dropped surfaces: {}'
                  .format(image_width, image_width, image_width, num_samples, num_removed_surfaces))
@@ -348,6 +370,7 @@ def main():
     plt.show()
 
     plot_voronoi_3d(image)
+    plot_voronoi_3d(reduced_image)
 
     return image
 
