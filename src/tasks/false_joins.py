@@ -396,9 +396,9 @@ def create_false_joins_image_iterating(image_width=50, num_samples=20, num_remov
     vor, sample_points, surfaces, border = construct_geometry(image_width, num_samples, num_removed_surfaces)
 
     # construct images
-    ground_truth_reduced = np.zeros((image_width, image_width, image_width), dtype=int)
-    noise_reduced = np.zeros(ground_truth_reduced.shape)
-    noise_generator = np.random.normal(0, sigma, size=ground_truth_reduced.shape)
+    ground_truth = np.zeros((image_width, image_width, image_width), dtype=int)
+    image = np.zeros(ground_truth.shape)
+    noise_generator = np.random.normal(0, sigma, size=ground_truth.shape)
     for i in range(image_width):
         print('Progress: Layer', i)
         for j in range(image_width):
@@ -406,26 +406,26 @@ def create_false_joins_image_iterating(image_width=50, num_samples=20, num_remov
                 pixel = Pixel(np.array([i, j, k]) / image_width)
                 pixel.min_dist_sample(sample_points=sample_points)
 
-                ground_truth_reduced[i, j, k] = min(pixel.closest_sample.region)
+                ground_truth[i, j, k] = min(pixel.closest_sample.region)
 
                 pixel.min_dist_surface(surfaces=surfaces)
                 pixel.compute_gray_value(rand_num=noise_generator[i, j, k])
-                noise_reduced[i, j, k] = pixel.reduced_gray_value
+                image[i, j, k] = pixel.reduced_gray_value
 
     # reformat image to 8bit
-    noise_reduced = np.interp(noise_reduced, (noise_reduced.min(), noise_reduced.max()), (0, 255)).astype(np.uint8)
+    image = np.interp(image, (image.min(), image.max()), (0, 255)).astype(np.uint8)
 
     if verbose:
         print("--- %s seconds ---" % (time.time() - start_time))
 
         fig, ax = plt.subplots(2, 1)
-        tracker = IndexTracker(ax, true=ground_truth_reduced, img=noise_reduced)
+        tracker = IndexTracker(ax, true=ground_truth, img=image)
         fig.suptitle('Use scroll wheel to navigate slices \nImage dimensions: ({}, {}, {}) \n'
                      .format(image_width, image_width, image_width))
         fig.canvas.mpl_connect('scroll_event', tracker.onscroll)
         plt.show()
 
-    return noise_reduced, ground_truth_reduced
+    return image, ground_truth
 
 
 def main():

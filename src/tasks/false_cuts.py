@@ -253,7 +253,6 @@ def create_false_cuts_image_iterating(image_width, d, num_spline_tries, sigma=0.
     ground_truth = np.zeros((image_width, image_width, image_width))
     noise_generator = np.random.normal(0, sigma, size=ground_truth.shape)
     image = np.zeros((image_width, image_width, image_width))
-    # not_found = np.zeros(image.shape)
 
     curves = []
 
@@ -298,8 +297,6 @@ def create_false_cuts_image_iterating(image_width, d, num_spline_tries, sigma=0.
                 pixel = Pixel(np.array([i, j, k]) / image_width)
 
                 t = pixel.min_dist_curve(curves=curves)
-                # if t == 0.0 or t == 1.0:
-                #     not_found[i, j, k] = 1
 
                 pixel.compute_gray_value(rand_num=noise_generator[i, j, k])
 
