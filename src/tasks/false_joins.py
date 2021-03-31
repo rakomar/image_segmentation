@@ -1,8 +1,95 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.spatial import Voronoi
 import time
-import functools
+import os
+import matplotlib.pyplot as plt
+from scipy import ndimage
+
+from ..utils import IndexTracker, plot_3d
+
+
+class TriangleSamples:
+    # https: // stackoverflow.com / questions / 11178414 / algorithm - to - generate - equally - distributed - points - in -a - polygon
+    def __init__(self, a, b, c):
+        self.a = a
+        self.b = b
+        self.c = c
+
+        self.area = np.linalg.norm(np.cross(b - a, c - a)) / 2
+
+    def get_triangle_samples(self, image_width):
+        num_triangle_samples = int(self.area * image_width ** 2)
+
+        r = np.random.uniform(size=(num_triangle_samples, 1))
+        d = (1 - r) * self.a + r * self.b
+        s = np.random.uniform(size=(num_triangle_samples, 1))
+        e = (1 - np.sqrt(s)) * self.c + np.sqrt(s) * d
+
+        # e is uniformly sampled across the surface
+        rounded_sample_points = np.around(e[(e.min(axis=1) >= 0) & (e.max(axis=1) <= 1), :] * image_width).astype(int)
+        rounded_sample_points = np.unique(rounded_sample_points[rounded_sample_points.max(axis=1) < image_width], axis=0)  # remove index image_width
+        return rounded_sample_points
+
+
+class Edge:
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+        self.delta = b - a
+        self.length_squared = np.linalg.norm(self.delta) ** 2
+
+    def point_at(self, t):
+        return self.a + t * self.delta
+
+    def project(self, p):
+        return np.dot((p - self.a), self.delta) / self.length_squared
+
+
+class Plane:
+    def __init__(self, point, direction):
+        self.point = point
+        self.direction = direction
+
+    def is_above(self, q):
+        return np.dot(self.direction, (q - self.point)) > 0
+
+
+class Triangle:
+    def __init__(self, a, b, c):
+        self.edge_ab = Edge(a, b)
+        self.edge_bc = Edge(b, c)
+        self.edge_ca = Edge(c, a)
+        self.trinorm = np.cross(a-b, a-c)
+        self.vertices = [a, b, c]
+
+        self.triplane = Plane(a, self.trinorm)
+
+        self.plane_ab = Plane(a, np.cross(self.trinorm, self.edge_ab.delta))
+        self.plane_bc = Plane(b, np.cross(self.trinorm, self.edge_bc.delta))
+        self.plane_ca = Plane(c, np.cross(self.trinorm, self.edge_ca.delta))
+
+    def clostest_point_to(self, p):
+        uab = self.edge_ab.project(p)
+        uca = self.edge_ca.project(p)
+
+        if uca > 1 and uab < 0:
+            return self.edge_ab.a
+
+        ubc = self.edge_bc.project(p)
+
+        if uab > 1 and ubc < 0:
+            return self.edge_bc.a
+        if ubc > 1 and uca < 0:
+            return self.edge_ca.a
+        if 0 < uab < 1 and not self.plane_ab.is_above(p):
+            return self.edge_ab.point_at(uab)
+        if 0 < ubc < 1 and not self.plane_bc.is_above(p):
+            return self.edge_bc.point_at(ubc)
+        if 0 < uca < 1 and not self.plane_ca.is_above(p):
+            return self.edge_ca.point_at(uca)
+
+        # clostest triangle inside triangle
+        return None
 
 
 def connect_neighbors(sample, sample_region):
@@ -34,11 +121,17 @@ class SamplePoint:
             self.same_surfaces = False
         return
 
-    def grow_connected_region(self):
+    def grow_connected_region(self, sample_points):
         # region growing on connected samples
         sample_region = set()
         connect_neighbors(self, sample_region)
         self.region = sample_region
+
+        # combine surface indices of all connected samples
+        surface_indices = set()
+        for sample_index in self.region:
+            surface_indices = surface_indices | set(sample_points[sample_index].reduced_adjacent_surface_indices)
+        self.reduced_adjacent_surface_indices = list(surface_indices)
 
 
 class Pixel:
@@ -70,9 +163,24 @@ class Pixel:
         return
 
     def pixel_plane_dist(self, plane):
-        normal, d = plane
+        normal, d, _ = plane
         dist = abs(np.sum(normal * self.position) + d) / np.linalg.norm(normal)
         return dist
+
+    def pixel_polygon_dist(self, polygon):
+        triangles = polygon[2]
+        min_dist = np.inf
+        for triangle in triangles:
+            clostest_point = triangle.clostest_point_to(self.position)
+            if clostest_point is None:
+                # clostest point inside triangle -> point-plane distance is enough
+                dist = self.pixel_plane_dist(polygon)
+            else:
+                dist = np.linalg.norm(self.position - clostest_point)
+
+            if dist < min_dist:
+                min_dist = dist
+        return min_dist
 
     def min_dist_surface(self, surfaces):
         min_dist = np.inf
@@ -99,11 +207,8 @@ class Pixel:
             self.dist_surface = min_dist
 
             reduced_min_dist = np.inf
-            # print(self.closest_sample.directly_connected_samples)
-            # for connected_sample in self.closest_sample.directly_connected_samples:
-            # TODO: iterate surfaces of all connected neighbors, make sure all neighbors are tracked for all samples within each group
             for surface_index in self.closest_sample.reduced_adjacent_surface_indices:
-                dist = self.pixel_plane_dist(surfaces[surface_index])
+                dist = self.pixel_polygon_dist(surfaces[surface_index])
 
                 if dist < reduced_min_dist:
                     reduced_min_dist = dist
@@ -112,66 +217,12 @@ class Pixel:
         return
 
     def compute_gray_value(self, rand_num):
-        self.gray_value = 1 - np.power(self.dist_surface, 1/10) + rand_num
-        self.reduced_gray_value = 1 - np.power(self.reduced_dist_surface, 1 / 10) + rand_num
+        # self.gray_value = 1 - np.power(self.dist_surface, 1/10) + rand_num
+        self.reduced_gray_value = -np.power(self.reduced_dist_surface, 1/10) + rand_num
         return
 
 
-class IndexTracker(object):
-    """
-    Class to visualize the 3D images.
-    Adapted from https://matplotlib.org/gallery/animation/image_slices_viewer.html
-
-    """
-
-    def __init__(self, ax, A, B, C, D, E, F):
-        # A, B, C, D 3D images of shape image_width^3 stored in np.array
-        self.ax = ax
-
-        self.A = A
-        self.B = B
-        self.C = C
-        self.D = D
-        self.E = E
-        self.F = F
-        rows, cols, self.slices = A.shape
-        self.ind = self.slices//2
-
-        self.im0 = ax[0, 0].imshow(self.A[:, :, self.ind])
-        self.ax[0, 0].set_title('Original')
-        self.im1 = ax[0, 1].imshow(self.B[:, :, self.ind], cmap='gray')
-        self.ax[0, 1].set_title('Border')
-        self.im2 = ax[0, 2].imshow(self.C[:, :, self.ind], cmap='gray')
-        self.ax[0, 2].set_title('Reduced Border')
-        self.im3 = ax[1, 0].imshow(self.D[:, :, self.ind], cmap='gray')
-        self.ax[1, 0].set_title('Noise')
-        self.im4 = ax[1, 1].imshow(self.E[:, :, self.ind], cmap='gray')
-        self.ax[1, 1].set_title('Reduced Noise')
-        self.im5 = ax[1, 2].imshow(self.F[:, :, self.ind])
-        self.ax[1, 2].set_title('Reduced Original')
-        self.update()
-
-    def onscroll(self, event):
-        print("%s %s" % (event.button, event.step))
-        if event.button == 'up':
-            self.ind = (self.ind + 1) % self.slices
-        else:
-            self.ind = (self.ind - 1) % self.slices
-        self.update()
-
-    def update(self):
-        self.im0.set_data(self.A[:, :, self.ind])
-        self.ax[0, 0].set_ylabel('slice %s' % self.ind)
-        self.im1.set_data(self.B[:, :, self.ind])
-        self.im2.set_data(self.C[:, :, self.ind])
-        self.im3.set_data(self.D[:, :, self.ind])
-        self.im4.set_data(self.E[:, :, self.ind])
-        self.im5.set_data(self.F[:, :, self.ind])
-
-        self.im0.axes.figure.canvas.draw()
-
-
-def voronoi_diagram(num=1000):
+def voronoi_diagram(num=100):
     # sample a number of points in the unit cube
     samples = np.random.uniform(low=0, high=1, size=(num, 3))
     boundary_points = np.array([[-1, -1, -1], [2, -1, -1], [-1, 2, -1], [2, 2, -1],
@@ -190,119 +241,90 @@ def voronoi_diagram(num=1000):
     return vor, sample_point_objects
 
 
-def build_surface_dict(vor):
-    """
-    Adapted from https://stackoverflow.com/questions/53698635/how-to-define-a-plane-with-3-points-and-plot-it-in-3d
-    (Reblochon Masque)
+def construct_geometry(image_width, num_samples=20, num_removed_surfaces=10):
 
-    """
-    # compute normal vectors and origin distances of planes from first 3 vertices
+    border = np.zeros((image_width, image_width, image_width), dtype=int)
+
+    vor, sample_points = voronoi_diagram(num_samples)
+
     surfaces = {}
+
+    reduced_ridge_point_indices = np.random.choice(range(len(vor.ridge_points)), num_removed_surfaces)
+
     for surface_index, surface_vertex_indices in enumerate(vor.ridge_vertices):
 
         if not surface_vertex_indices:
             continue
-        if -1 in surface_vertex_indices:
-            continue
+        if -1 not in surface_vertex_indices:
 
-        x0, y0, z0 = vor.vertices[surface_vertex_indices[0]]
-        x1, y1, z1 = vor.vertices[surface_vertex_indices[1]]
-        x2, y2, z2 = vor.vertices[surface_vertex_indices[2]]
+            # add all the triangles in the given surface
+            triangles = []
+            num_verts = len(surface_vertex_indices)
 
-        ux, uy, uz = u = [x1 - x0, y1 - y0, z1 - z0]
-        vx, vy, vz = v = [x2 - x0, y2 - y0, z2 - z0]
+            if num_verts == 3:
+                # triangle
+                verts = vor.vertices[surface_vertex_indices]
+                triangles.append(Triangle(verts[0], verts[1], verts[2]))
 
-        u_cross_v = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]
+                if surface_index not in reduced_ridge_point_indices:
+                    sampels = TriangleSamples(verts[0], verts[1], verts[2])
+                    coords = sampels.get_triangle_samples(image_width)
+                    border[coords[:, 0], coords[:, 1], coords[:, 2]] = 1
 
-        point = np.array(vor.vertices[surface_vertex_indices[0]])
-        normal = np.array(u_cross_v)
+            elif num_verts > 3:
+                # convex polygon
+                fixed_vert = vor.vertices[surface_vertex_indices[0]]
+                for itr in range(2, num_verts):
+                    verts = np.array([
+                        fixed_vert,
+                        vor.vertices[surface_vertex_indices[itr - 1]],
+                        vor.vertices[surface_vertex_indices[itr]]
+                    ])
+                    triangles.append(Triangle(verts[0], verts[1], verts[2]))
 
-        d = -point.dot(normal)
-        surfaces[surface_index] = (normal, d)
-    return surfaces
+                    if surface_index not in reduced_ridge_point_indices:
+                        sampels = TriangleSamples(verts[0], verts[1], verts[2])
+                        coords = sampels.get_triangle_samples(image_width)
+                        border[coords[:, 0], coords[:, 1], coords[:, 2]] = surface_index
 
+            # compute normal-distance pair
+            """
+            Adapted from https://stackoverflow.com/questions/53698635/how-to-define-a-plane-with-3-points-and-plot-it-in-3d
+            (Reblochon Masque)
 
-def draw_collection_lines(verts):
-    # TODO: not all edges are drawn, verts not ordered?
-    # draw the edge lines for a polygon given by the vertices
-    for itr in range(0, len(verts)):
-        plt.plot(
-            [verts[itr - 1, 0], verts[itr, 0]],
-            [verts[itr - 1, 1], verts[itr, 1]],
-            [verts[itr - 1, 2], verts[itr, 2]],
-            color="k"
-        )
-    return
+            """
+            x0, y0, z0 = vor.vertices[surface_vertex_indices[0]]
+            x1, y1, z1 = vor.vertices[surface_vertex_indices[1]]
+            x2, y2, z2 = vor.vertices[surface_vertex_indices[2]]
 
+            ux, uy, uz = u = [x1 - x0, y1 - y0, z1 - z0]
+            vx, vy, vz = v = [x2 - x0, y2 - y0, z2 - z0]
 
-def cartesian_product_broadcasted(*arrays):
-    """
-    http://stackoverflow.com/a/11146645/190597 (senderle)
-    """
-    broadcastable = np.ix_(*arrays)
-    broadcasted = np.broadcast_arrays(*broadcastable)
-    dtype = np.result_type(*arrays)
-    rows, cols = functools.reduce(np.multiply, broadcasted[0].shape), len(broadcasted)
-    out = np.empty(rows * cols, dtype=dtype)
-    start, end = 0, rows
-    for a in broadcasted:
-        out[start:end] = a.reshape(-1)
-        start, end = end, end + rows
-    return out.reshape(cols, rows).T
+            u_cross_v = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]
 
+            point = np.array(vor.vertices[surface_vertex_indices[0]])
+            normal = np.array(u_cross_v)
 
-def plot_voronoi_3d(image):
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1, projection='3d')
-
-    size = image.shape[0]
-    volume = image
-    x, y, z = cartesian_product_broadcasted(*[np.arange(size, dtype='int16')] * 3).T
-    mask = ((x == 0) | (x == size - 1)
-            | (y == 0) | (y == size - 1)
-            | (z == 0) | (z == size - 1))
-    x = x[mask]
-    y = y[mask]
-    z = z[mask]
-    volume = volume.ravel()[mask]
-
-    ax.scatter(x, y, z, c=volume, cmap=plt.get_cmap('Greys'))
-    plt.show()
+            d = -point.dot(normal)
+            surfaces[surface_index] = (normal, d, triangles)
 
 
-def main():
-    start_time = time.time()
+            # add adjacent surfaces to each sample point
+            split_points = vor.ridge_points[surface_index]
 
-    num_samples = 10
-    num_removed_surfaces = 10
-    image_width = 10  # change to adapt resolution
+            sample0 = sample_points[split_points[0]]
+            sample1 = sample_points[split_points[1]]
 
-    # create Voronoi diagram
-    vor, sample_points = voronoi_diagram(num_samples)
+            # add normal-distance pair of adjacent plane to sample point
+            sample0.adjacent_surface_indices.append(surface_index)
+            sample1.adjacent_surface_indices.append(surface_index)
 
-    surfaces = build_surface_dict(vor)
-
-    # add adjacent surfaces to each sample point
-    reduced_ridge_point_indices = np.random.choice(range(len(vor.ridge_points)), num_removed_surfaces)
-
-    for surface_index, split_points in enumerate(vor.ridge_points):
-
-        if -1 in vor.ridge_vertices[surface_index]:
-            continue
-
-        sample0 = sample_points[split_points[0]]
-        sample1 = sample_points[split_points[1]]
-
-        # add normal-distance pair of adjacent plane to sample point
-        sample0.adjacent_surface_indices.append(surface_index)
-        sample1.adjacent_surface_indices.append(surface_index)
-
-        if surface_index not in reduced_ridge_point_indices:
-            sample0.reduced_adjacent_surface_indices.append(surface_index)
-            sample1.reduced_adjacent_surface_indices.append(surface_index)
-        else:
-            sample0.directly_connected_samples.append(sample1)
-            sample1.directly_connected_samples.append(sample0)
+            if surface_index not in reduced_ridge_point_indices:
+                sample0.reduced_adjacent_surface_indices.append(surface_index)
+                sample1.reduced_adjacent_surface_indices.append(surface_index)
+            else:
+                sample0.directly_connected_samples.append(sample1)
+                sample1.directly_connected_samples.append(sample0)
 
     # remove surface duplicates and compare surface lists
     for sample_point in sample_points:
@@ -311,69 +333,176 @@ def main():
         sample_point.directly_connected_samples = list(set(sample_point.directly_connected_samples))
 
     for sample_point in sample_points:
+        # TODO: only process one sample of the region and share information with other samples
         # directly_connected_samples have to be built before for all samples
-        sample_point.grow_connected_region()
+        sample_point.grow_connected_region(sample_points)
+        sample_point.compare_surfaces()
+
+    return vor, sample_points, surfaces, border
+
+
+def create_false_joins_image_sampling(image_width=50, num_samples=20, num_removed_surfaces=20, sigmas=[0.02], verbose=False):
+    start_time = time.time()
 
     # construct images
-    image = np.zeros((image_width, image_width, image_width), dtype=int)
-    reduced_image = np.zeros(image.shape, dtype=int)
-    border = np.zeros(image.shape, dtype=int)
-    reduced_border = np.zeros(image.shape, dtype=int)
-    noise = np.zeros(image.shape)
-    reduced_noise = np.zeros(image.shape)
-    noise_generator = np.random.normal(0, 0.01, size=image.shape) * 1
+    ground_truth = -np.ones((image_width+1, image_width+1, image_width+1), dtype=int)
 
-    pixels = []  # list of length image_width^3
+    # create Voronoi diagram
+    vor, sample_points, surfaces, border = construct_geometry(image_width, num_samples, num_removed_surfaces)
 
+    # compute distances to nearest curves
+    distance = ndimage.distance_transform_edt(border == 0) / image_width
+    distance = np.power(distance, 1/5)
+
+    images = []
+    for sigma in sigmas:
+        noise_generator = np.random.normal(0, sigma, size=(image_width, image_width, image_width))
+
+        # add noise
+        image = distance + noise_generator
+
+        # reformat image to 8bit
+        image = np.interp(image, (image.min(), image.max()), (0, 255)).astype(np.uint8)
+        image = 255 - image
+
+        images.append(image)
+
+    coords = np.vstack([np.around((sample.position * image_width)).astype(int) for sample in sample_points[:num_samples]])
+    for i in range(num_samples):
+        ground_truth[coords[i, 0], coords[i, 1], coords[i, 2]] = min(sample_points[i].region)
+
+    _, indices = ndimage.distance_transform_edt(ground_truth == -1, return_indices=True)
+
+    ground_truth = ground_truth[indices[0], indices[1], indices[2]]
+    ground_truth = ground_truth[:-1, :-1, :-1]
+
+    if verbose:
+        print("--- %s seconds ---" % (time.time() - start_time))
+
+        fig, ax = plt.subplots(2, 1)
+        tracker = IndexTracker(ax, image_minnoise=images[0], image_maxnoise=images[-1])
+        fig.suptitle('Use scroll wheel to navigate slices \nImage dimensions: ({}, {}, {}) \n'
+                     .format(image_width, image_width, image_width))
+        fig.canvas.mpl_connect('scroll_event', tracker.onscroll)
+        plt.show()
+
+    return images, ground_truth
+
+
+def create_false_joins_image_iterating(image_width=50, num_samples=20, num_removed_surfaces=20, sigma=0.02, verbose=False):
+    start_time = time.time()
+
+    # create Voronoi diagram
+    vor, sample_points, surfaces, border = construct_geometry(image_width, num_samples, num_removed_surfaces)
+
+    # construct images
+    ground_truth_reduced = np.zeros((image_width, image_width, image_width), dtype=int)
+    noise_reduced = np.zeros(ground_truth_reduced.shape)
+    noise_generator = np.random.normal(0, sigma, size=ground_truth_reduced.shape)
     for i in range(image_width):
         print('Progress: Layer', i)
         for j in range(image_width):
             for k in range(image_width):
                 pixel = Pixel(np.array([i, j, k]) / image_width)
                 pixel.min_dist_sample(sample_points=sample_points)
-                pixels.append(pixel)
 
-                image[i, j, k] = pixel.closest_sample.index
-                reduced_image[i, j, k] = min(pixel.closest_sample.region)
+                ground_truth_reduced[i, j, k] = min(pixel.closest_sample.region)
 
                 pixel.min_dist_surface(surfaces=surfaces)
-
                 pixel.compute_gray_value(rand_num=noise_generator[i, j, k])
-
-                if pixel.dist_surface < 0.01:
-                    border[i, j, k] = 1
-
-                if pixel.reduced_dist_surface < 0.01:
-                    reduced_border[i, j, k] = 1
-
-                noise[i, j, k] = pixel.gray_value
-                reduced_noise[i, j, k] = pixel.reduced_gray_value
+                noise_reduced[i, j, k] = pixel.reduced_gray_value
 
     # reformat image to 8bit
-    reduced_noise = np.interp(reduced_noise, (reduced_noise.min(), reduced_noise.max()), (0, 255)).astype(np.uint8)
+    noise_reduced = np.interp(noise_reduced, (noise_reduced.min(), noise_reduced.max()), (0, 255)).astype(np.uint8)
 
-    np.save('../storage/image', image)
-    np.save('../storage/image + reduced', reduced_image)
-    np.save('../storage/border', border)
-    np.save('../storage/border + reduced', reduced_border)
-    np.save('../storage/noise', noise)
-    np.save('../storage/noise + reduced', reduced_noise)
+    if verbose:
+        print("--- %s seconds ---" % (time.time() - start_time))
 
-    print("--- %s seconds ---" % (time.time() - start_time))
+        fig, ax = plt.subplots(2, 1)
+        tracker = IndexTracker(ax, true=ground_truth_reduced, img=noise_reduced)
+        fig.suptitle('Use scroll wheel to navigate slices \nImage dimensions: ({}, {}, {}) \n'
+                     .format(image_width, image_width, image_width))
+        fig.canvas.mpl_connect('scroll_event', tracker.onscroll)
+        plt.show()
 
-    fig, ax = plt.subplots(2, 3)
-    tracker = IndexTracker(ax, image, border, reduced_border, noise, reduced_noise, reduced_image)
-    fig.suptitle('Use scroll wheel to navigate slices \nImage dimensions: ({}, {}, {}) \n'
-                 'Number samples: {} \nNumber dropped surfaces: {}'
-                 .format(image_width, image_width, image_width, num_samples, num_removed_surfaces))
-    fig.canvas.mpl_connect('scroll_event', tracker.onscroll)
-    plt.show()
-
-    plot_voronoi_3d(image)
-    plot_voronoi_3d(reduced_image)
-
-    return image
+    return noise_reduced, ground_truth_reduced
 
 
-if __name__ == "__main__":
-    main()
+def main():
+    image_width = 300
+
+    # number of samples in the Voronoi diagram
+    num_samples = 1500  # 1500
+
+    # number of surfaces that are removed between random cells
+    num_removed_surfaces = 1000  # 1000
+
+    sigmas = [0.02, 0.04, 0.05, 0.06, 0.08, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+
+    verbose = False
+
+    sampling = True
+    to_dataset = True
+    size_dataset = 10
+
+    if to_dataset:
+        times = []
+        for i in range(size_dataset):
+            start_time = time.time()
+            try:
+                os.mkdir('src/storage/datasets/false_joins/Sample' + str(i))
+            except OSError:
+                print("Already existent")
+            else:
+                print("Successfully created.")
+
+            if sampling:
+                images, ground_truth = create_false_joins_image_sampling(
+                    image_width=image_width,
+                    num_samples=num_samples,
+                    num_removed_surfaces=num_removed_surfaces,
+                    sigmas=sigmas,
+                    verbose=verbose
+                )
+                for j, sigma in enumerate(sigmas):
+                    np.save('src/storage/datasets/false_joins/Sample' + str(i) + '/image_sigma' + str(sigma),
+                            images[j])
+            else:
+                image, ground_truth = create_false_joins_image_iterating(
+                    image_width=image_width,
+                    num_samples=num_samples,
+                    num_removed_surfaces=num_removed_surfaces,
+                    sigma=sigmas[0],
+                    verbose=verbose
+                )
+                np.save('src/storage/datasets/false_joins/Sample' + str(i) + '/image_sigma' + str(sigmas[0]), image)
+
+            np.save('src/storage/datasets/false_joins/Sample' + str(i) + '/ground_truth', ground_truth)
+
+            times.append(time.time() - start_time)
+        print("Best Time: ", np.min(times))
+        print("Worst Time", np.max(times))
+        print("Mean Time: ", np.mean(times))
+    else:
+        if sampling:
+            images, ground_truth = create_false_joins_image_sampling(
+                image_width=image_width,
+                num_samples=num_samples,
+                num_removed_surfaces=num_removed_surfaces,
+                sigmas=sigmas,
+                verbose=verbose
+            )
+            for j, sigma in enumerate(sigmas):
+                np.save('src/storage/false_joins/image_sigma' + str(sigma),
+                        images[j])
+        else:
+            image, ground_truth = create_false_joins_image_iterating(
+                image_width=image_width,
+                num_samples=num_samples,
+                num_removed_surfaces=num_removed_surfaces,
+                sigma=sigmas[0],
+                verbose=verbose
+            )
+            np.save('src/storage/false_joins/image', image)
+
+        np.save('src/storage/false_joins/ground_truth', ground_truth)

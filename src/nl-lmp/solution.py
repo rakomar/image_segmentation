@@ -22,10 +22,24 @@ class Solution:
             #return "(Cls: " + str(self.class_index) + ", Comp: " + str(self.component_index) + ")"
             return "P: " + str(self.component_index)
 
-    def __init__(self, n):
+    def __init__(self, n=None, array=None):
         self.solution = []
-        for i in range(n):
-            self.solution.append(self.Element(0, i))
+
+        # create newly initialized solution
+        if n:
+            for i in range(n):
+                self.solution.append(self.Element(0, 0))
+
+        # construct solution from (image) array
+        elif array is not None:
+            width = array.shape[0]
+            for k in range(width):
+                for j in range(width):
+                    for i in range(width):
+                        self.solution.append(self.Element(0, array[i, j, k]))
+
+        else:
+            print("Provide initialization information.")
 
     def __len__(self):
         return len(self.solution)
@@ -33,7 +47,10 @@ class Solution:
     def __repr__(self):
         return "Solution: " + str([self.solution[i] for i in range(len(self.solution))])
 
-    def to_numpy_array(self, width):
+    def to_numpy_array(self):
+        width = int(round(len(self.solution) ** (1/3)))
+        assert width ** 3 == len(self.solution)
+
         arr = np.zeros((width, width, width), dtype=int)
         for i in range(width):
             for j in range(width):

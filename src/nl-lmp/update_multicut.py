@@ -9,10 +9,12 @@
 # THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
+import copy
+import time
 
 # settings
-num_outer_iterations = 1
-num_inner_iterations = 1
+num_outer_iterations = 10
+num_inner_iterations = 30
 epsilon = 0.00001
 
 
@@ -24,12 +26,12 @@ def update_multicut(problem, solution):
         component_labels.append(solution.solution[node].component_index)
 
     edge_costs = []
-    for edge in problem.graph.edges:
+    for i, edge in enumerate(problem.graph.edges):
         node0 = edge.node0
         cls0 = solution.solution[node0].class_index
         node1 = edge.node1
         cls1 = solution.solution[node1].class_index
-        val = problem.get_cut_cost(node0, node1, cls0, cls1) - problem.get_join_cost(node0, node1, cls0, cls1)
+        val = problem.get_cut_cost(node0, node1, cls0, cls1, i) - problem.get_join_cost(node0, node1, cls0, cls1, i)
         edge_costs.append(val)
 
     new_component_labels = kernighan_lin(problem.graph, edge_costs, component_labels)
@@ -68,6 +70,8 @@ def kernighan_lin(graph, edge_costs, component_labels):
         gain_from_merging = 0
 
         def compute_difference(component_A, label_A, label_B, graph, buffer, edge_costs, gain_from_merging):
+            start_time = time.time()
+            #print(len(component_A))
             for i in range(len(component_A)):
                 difference_interior = 0
                 difference_exterior = 0
@@ -100,10 +104,11 @@ def kernighan_lin(graph, edge_costs, component_labels):
                 buffer.is_moved[component_A[i]] = 0
 
                 gain_from_merging += difference_exterior
+            #print("--- %s seconds ---" % (time.time() - start_time))
             return
 
         if not component_A:
-            return 0
+            return 0, component_A, component_B
 
         label_A = buffer.vertex_labels[component_A[0]]
         if component_B:
@@ -259,9 +264,9 @@ def kernighan_lin(graph, edge_costs, component_labels):
 
     # compute initial edge objective value
     starting_objective_value = 0
-    for i in range(len(graph.edges)):
-        node0 = graph.edges[i].node0
-        node1 = graph.edges[i].node1
+    for i, edge in enumerate(graph.edges):
+        node0 = edge.node0
+        node1 = edge.node1
         if component_labels[node0] != component_labels[node1]:
             starting_objective_value += edge_costs[i]
 
@@ -277,7 +282,7 @@ def kernighan_lin(graph, edge_costs, component_labels):
 
     print("Starting obj val: ", starting_objective_value)
 
-    last_good_vertex_labels = buffer.vertex_labels
+    last_good_vertex_labels = copy.deepcopy(buffer.vertex_labels)
 
     # keep track of visited nodes for BFS/DFS
     visited = [0] * len(graph)
@@ -286,7 +291,7 @@ def kernighan_lin(graph, edge_costs, component_labels):
 
     # iteratively update bipartitions to reduce objective value
     for _ in range(num_outer_iterations):
-
+        print("ITER")
         objective_value_reduction = 0
 
         adjacent_components = [set() for _ in range(num_components)]
@@ -302,6 +307,7 @@ def kernighan_lin(graph, edge_costs, component_labels):
             if partitions[component]:
                 for other_component in adjacent_components[component]:
                     if partitions[other_component] and (changed[component] or changed[other_component]):
+                        print(len(partitions))
 
                         ret, partitions[component], partitions[other_component] = update_bipartition(partitions[component], partitions[other_component], graph, buffer, edge_costs)
 
@@ -313,6 +319,8 @@ def kernighan_lin(graph, edge_costs, component_labels):
 
                         if len(partitions[component]) == 0:
                             break
+
+        print(buffer.vertex_labels)
 
         ee = objective_value_reduction
 
@@ -332,7 +340,6 @@ def kernighan_lin(graph, edge_costs, component_labels):
 
                 if not new_set:
                     break
-
                 partitions.append(new_set)
 
         # if !visitor(buffer.vertex_labels)
@@ -342,6 +349,8 @@ def kernighan_lin(graph, edge_costs, component_labels):
             break
 
         stack = []
+
+        visited = [0] * len(visited)
 
         partitions = []
         num_components = 0
@@ -386,16 +395,18 @@ def kernighan_lin(graph, edge_costs, component_labels):
         buffer.max_not_used_label = num_components
 
         didnt_change = True
-        for i in range(len(graph.edges)):
-            node0 = graph.edges[i].node0
-            node1 = graph.edges[i].node1
+        for edge in graph.edges:
+            node0 = edge.node0
+            node1 = edge.node1
 
             edge_label = (buffer.vertex_labels[node0] != buffer.vertex_labels[node1])
+            old_edge_label = (last_good_vertex_labels[node0] != last_good_vertex_labels[node1])
 
-            if edge_label != (last_good_vertex_labels[node0] != last_good_vertex_labels[node1]):
+            if edge_label != old_edge_label:
                 didnt_change = False
 
         if didnt_change:
+            print("break")
             break
 
         # check if the shape of some partitions didn't change
@@ -415,7 +426,7 @@ def kernighan_lin(graph, edge_costs, component_labels):
                     del stack[-1]
 
                     for edge in graph.nodes[node].incoming_edge_indices:
-                        neighbor_node = edge.node0
+                        neighbor_node = graph.edges[edge].node0
 
                         if last_good_vertex_labels[neighbor_node] == label_old and buffer.vertex_labels[neighbor_node] != label_new:
                             changed[label_new] = 1
@@ -431,7 +442,7 @@ def kernighan_lin(graph, edge_costs, component_labels):
                                 changed[label_new] = 1
 
                     for edge in graph.nodes[node].outgoing_edge_indices:
-                        neighbor_node = edge.node1
+                        neighbor_node = graph.edges[edge].node1
 
                         if last_good_vertex_labels[neighbor_node] == label_old and buffer.vertex_labels[neighbor_node] != label_new:
                             changed[label_new] = 1
@@ -446,10 +457,8 @@ def kernighan_lin(graph, edge_costs, component_labels):
                             if last_good_vertex_labels[neighbor_node] != label_old:
                                 changed[label_new] = 1
 
-        last_good_vertex_labels = buffer.vertex_labels
+        last_good_vertex_labels = copy.deepcopy(buffer.vertex_labels)
 
         print("Last good vertex labels: ", last_good_vertex_labels)
 
     return last_good_vertex_labels
-
-

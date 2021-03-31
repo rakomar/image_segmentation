@@ -12,14 +12,27 @@
 import numpy as np
 
 
+def dims_from_index(index, width):
+    d2 = int(np.floor(index / width ** 2))
+    d1 = int(np.floor((index % width ** 2) / width))
+    d0 = (index % width ** 2) % width
+    return (d0, d1, d2)
+
+
+def manhattan_dist(vec0, vec1):
+    d0, d1, d2 = vec0
+    d3, d4, d5 = vec1
+    return abs(d0 - d3) + abs(d1 - d4) + abs(d2 - d5)
+
+
 class Problem:
 
     def __init__(self, graph, num_classes):
-        self.num_nodes = len(graph)
+        self.num_nodes = graph.num_nodes
         self.num_classes = num_classes
 
         self.graph = graph
-        edge_vec_length = len(self.graph.edges) * self.num_classes ** 2
+        edge_vec_length = graph.num_edges * self.num_classes ** 2
 
         self.node_costs = np.zeros((self.num_nodes, self.num_classes))
         self.cut_costs = np.zeros(edge_vec_length)
@@ -32,45 +45,73 @@ class Problem:
         self.node_costs[node, cls] = val
         return
 
-    def get_cut_cost(self, node0, node1, cls0, cls1):
+    def get_cut_cost(self, node0, node1, cls0, cls1, edge_index=None):
         if node1 < node0:
             node0, node1 = node1, node0
-        index = self.edge_cost_index(
-            edge_index=self.graph.find_edge(node0, node1),
-            cls0=cls0,
-            cls1=cls1
-        )
+        if edge_index is not None:
+            index = self.edge_cost_index(
+                edge_index=edge_index,
+                cls0=cls0,
+                cls1=cls1
+            )
+        else:
+            index = self.edge_cost_index(
+                edge_index=self.graph.find_edge(node0, node1),
+                cls0=cls0,
+                cls1=cls1
+            )
         return self.cut_costs[index]
 
-    def set_cut_cost(self, node0, node1, cls0, cls1, val):
+    def set_cut_cost(self, node0, node1, cls0, cls1, val, edge_index=None):
         if node1 < node0:
             node0, node1 = node1, node0
-        index = self.edge_cost_index(
-            edge_index=self.graph.find_edge(node0, node1),
-            cls0=cls0,
-            cls1=cls1
-        )
+        if edge_index is not None:
+            index = self.edge_cost_index(
+                edge_index=edge_index,
+                cls0=cls0,
+                cls1=cls1
+            )
+        else:
+            index = self.edge_cost_index(
+                edge_index=self.graph.find_edge(node0, node1),
+                cls0=cls0,
+                cls1=cls1
+            )
         self.cut_costs[index] = val
         return
 
-    def get_join_cost(self, node0, node1, cls0, cls1):
+    def get_join_cost(self, node0, node1, cls0, cls1, edge_index=None):
         if node1 < node0:
             node0, node1 = node1, node0
-        index = self.edge_cost_index(
-            edge_index=self.graph.find_edge(node0, node1),
-            cls0=cls0,
-            cls1=cls1
-        )
+        if edge_index is not None:
+            index = self.edge_cost_index(
+                edge_index=edge_index,
+                cls0=cls0,
+                cls1=cls1
+            )
+        else:
+            index = self.edge_cost_index(
+                edge_index=self.graph.find_edge(node0, node1),
+                cls0=cls0,
+                cls1=cls1
+            )
         return self.join_costs[index]
 
-    def set_join_cost(self, node0, node1, cls0, cls1, val):
+    def set_join_cost(self, node0, node1, cls0, cls1, val, edge_index=None):
         if node1 < node0:
             node0, node1 = node1, node0
-        index = self.edge_cost_index(
-            edge_index=self.graph.find_edge(node0, node1),
-            cls0=cls0,
-            cls1=cls1
-        )
+        if edge_index is not None:
+            index = self.edge_cost_index(
+                edge_index=edge_index,
+                cls0=cls0,
+                cls1=cls1
+            )
+        else:
+            index = self.edge_cost_index(
+                edge_index=self.graph.find_edge(node0, node1),
+                cls0=cls0,
+                cls1=cls1
+            )
         self.join_costs[index] = val
         return
 
@@ -95,87 +136,77 @@ class Problem:
                 objective_value += self.get_cut_cost(node0, node1, cls0, cls1)
         return objective_value
 
-    def dims_from_index(self, index, width):
-        d2 = int(np.floor(index / width ** 2))
-        d1 = int(np.floor((index % width ** 2) / width))
-        d0 = (index % width ** 2) % width
-        return d0, d1, d2
-
     def compute_edge_costs(self, image, ground_truth):
-        arr = np.zeros(image.shape, dtype=int)
+        for edge_index in range(len(self.graph.edges)):
 
-        width = image.shape[0]
-        count = 0
-        for edge in self.graph.edges:
-            print(edge)
-            # node0 = edge.node0
-            # d0, d1, d2 = self.dims_from_index(node0, width)
-            # gray_val0 = image[d0, d1, d2]
-            #
-            # node1 = edge.node1
-            # d0, d1, d2 = self.dims_from_index(node1, width)
-            # gray_val1 = image[d0, d1, d2]
-            #
-            # if gray_val0 < 102:
-            #     if gray_val1 < 102:
-            #         join_cost = 0
-            #         cut_cost = 1
-            #     else:
-            #         join_cost = 1
-            #         cut_cost = 0
-            # else:
-            #     if gray_val1 < 102:
-            #         join_cost = 1
-            #         cut_cost = 0
-            #     else:
-            #         join_cost = 0
-            #         cut_cost = 1
+            node0 = self.graph.edges[edge_index].node0
+            node1 = self.graph.edges[edge_index].node1
 
-            node0 = edge.node0
-            d0, d1, d2 = self.dims_from_index(node0, width)
+            join_cost, cut_cost = true_costs(node0, node1, ground_truth)
 
-            node1 = edge.node1
-            d3, d4, d5 = self.dims_from_index(node1, width)
-
-            # join_cost = -10
-            # cut_cost = 10
-
-            if ground_truth[d0, d1, d2] == ground_truth[d3, d4, d5]:
-                join_cost = 0
-                cut_cost = 500
-            else:
-                count += 1
-                join_cost = 1000
-                cut_cost = -20
-                arr[d0, d1, d2] = 1
-                arr[d3, d4, d5] = 1
-
-            # join_cost = 0
-            # cut_cost = 20
-            # if (d0, d1, d2) == (2, 2, 2) or (d3, d4, d5) == (2, 2, 2):
-            #     cut_cost = -20
-            # arr[2, 2, 2] = 1
-            # if (d2 == 1 and d5 == 2) or (d2 == 2 and d5 == 1):
-            #     count += 1
-            #     cut_cost = -20
-            #     join_cost = 20
-
-            # join_cost = abs(int(gray_val0) - int(gray_val1)) / 255
-            # cut_cost = 3*abs(int(gray_val0) - int(gray_val1)) / 255
+            # join_cost, cut_cost = grayscale_costs(node0, node1, image)
 
             self.set_join_cost(
                 node0=node0,
                 node1=node1,
                 cls0=0,
                 cls1=0,
-                val=join_cost
+                val=join_cost,
+                edge_index=edge_index
             )
             self.set_cut_cost(
                 node0=node0,
                 node1=node1,
                 cls0=0,
                 cls1=0,
-                val=cut_cost
+                val=cut_cost,
+                edge_index=edge_index
             )
-        print(count)
-        return arr
+        return
+
+
+def true_costs(node0, node1, ground_truth):
+    width = ground_truth.shape[0]
+    vec0 = dims_from_index(node0, width)
+    vec1 = dims_from_index(node1, width)
+
+    if ground_truth[vec0] == ground_truth[vec1]:
+        join_cost = 0
+        cut_cost = 1000
+    else:
+        join_cost = 1000
+        cut_cost = 0
+    return join_cost, cut_cost
+
+
+def grayscale_costs(node0, node1, image):
+    width = image.shape[0]
+    vec0 = dims_from_index(node0, width)
+    vec1 = dims_from_index(node1, width)
+    gray_val0 = image[vec0]
+    gray_val1 = image[vec1]
+
+    dist = manhattan_dist(vec0, vec1)
+    gray_val_dist = abs(int(gray_val0) - int(gray_val1))
+
+    join_cost = (dist) * (gray_val_dist)
+    cut_cost = (width - dist) * (gray_val_dist)
+
+    # if gray_val0 < 102:
+    #     if gray_val1 < 102:
+    #         join_cost = 0
+    #         cut_cost = 10
+    #     else:
+    #         join_cost = 10
+    #         cut_cost = 0
+    # else:
+    #     if gray_val1 < 102:
+    #         join_cost = 10
+    #         cut_cost = 0
+    #     else:
+    #         join_cost = 0
+    #         cut_cost = 10
+    return join_cost, cut_cost
+
+
+

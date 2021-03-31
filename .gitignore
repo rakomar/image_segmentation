@@ -1,6 +1,11 @@
 .idea
 venv
+*/__pycache__
+*/*/__pycache__
 src/test
 src/images
 src/storage
-src/nl-lmp/__pycache__
+src/nl-lmp/*_complete.py
+src/old_data
+src/make_png.py
+main.py
