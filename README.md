@@ -8,7 +8,7 @@ This repository contains the code and report for the Research Project on the top
 
 It is concerned with the influence of False Joins and False Cuts on the performance of image segmentation algorithms. A False Join refers to the incorrect joining of two pixels that in reality belong to different components and a False Cuts refers to the incorrect cutting apart of two pixels that in reality belong to the same object. The effects of these problem types are analyzed on the example of simple watershed segmentation. 
 
-To facilitate the analysis, the code provides ways to artificially sample 3D images containing examples that highly emphasize the two error classes. The images are created with the help of a Voronoi diagram (False Joins) and Bézier Curves (False Cuts).
+To facilitate the analysis, the code provides ways to artificially sample noisy 3D images containing examples that highly emphasize the two error classes. The images are created with the help of a Voronoi diagram (False Joins) and Bézier Curves (False Cuts).
 
 ## Content
 The code contains utilities for the creation of the error class 3D images and segmentation algorithms to segment those images.
