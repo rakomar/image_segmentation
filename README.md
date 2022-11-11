@@ -1,7 +1,8 @@
 # Extreme Image Segmentation
 
-<img src="https://user-images.githubusercontent.com/33101114/201391665-65268350-457a-45ee-8b53-348188b440b0.gif" width="240"> <img src="https://user-images.githubusercontent.com/33101114/201392010-a555b03e-0a22-4555-b0ca-da042a6715e2.gif" width="240"> <img src="https://user-images.githubusercontent.com/33101114/201394073-8fb503fd-1f3d-47b1-a17e-e751be786850.gif" width="240"> <img src="https://user-images.githubusercontent.com/33101114/201393184-e1d99ba7-678a-4dab-a61f-d7ed9c72b65b.gif" width="240">
-)
+<img src="https://user-images.githubusercontent.com/33101114/201391665-65268350-457a-45ee-8b53-348188b440b0.gif" width="200"> <img src="https://user-images.githubusercontent.com/33101114/201392010-a555b03e-0a22-4555-b0ca-da042a6715e2.gif" width="200"> 
+<img src="https://user-images.githubusercontent.com/33101114/201394073-8fb503fd-1f3d-47b1-a17e-e751be786850.gif" width="200"> <img src="https://user-images.githubusercontent.com/33101114/201393184-e1d99ba7-678a-4dab-a61f-d7ed9c72b65b.gif" width="200">
+
 
 This repository contains the code and report for the Research Project on the topic of "Extreme Image Segmentation" at the Chair of Machine Learning for Computer Vision of the Faculty of Computer Science at TU Dresden university.
 
