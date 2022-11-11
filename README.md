@@ -1,5 +1,8 @@
 # Extreme Image Segmentation
 
+<img src="https://user-images.githubusercontent.com/33101114/201391665-65268350-457a-45ee-8b53-348188b440b0.gif" width="240"> <img src="https://user-images.githubusercontent.com/33101114/201392010-a555b03e-0a22-4555-b0ca-da042a6715e2.gif" width="240"> <img src="https://user-images.githubusercontent.com/33101114/201394073-8fb503fd-1f3d-47b1-a17e-e751be786850.gif" width="240"> <img src="https://user-images.githubusercontent.com/33101114/201393184-e1d99ba7-678a-4dab-a61f-d7ed9c72b65b.gif" width="240">
+)
+
 This repository contains the code and report for the Research Project on the topic of "Extreme Image Segmentation" at the Chair of Machine Learning for Computer Vision of the Faculty of Computer Science at TU Dresden university.
 
 It is concerned with the influence of False Joins and False Cuts on the performance of image segmentation algorithms. A False Join refers to the incorrect joining of two pixels that in reality belong to different components and a False Cuts refers to the incorrect cutting apart of two pixels that in reality belong to the same object. The effects of these problem types are analyzed on the example of simple watershed segmentation. 
